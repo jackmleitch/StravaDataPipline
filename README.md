@@ -1,7 +1,7 @@
 # Strava Data ETL Pipline
 **:arrows_counterclockwise: :running: ETL of my own Strava data using the Strava API, MySQL, Python, S3, and Redshift**
 
-## Data Ingestion 
+## [Data Ingestion](https://github.com/jackmleitch/StravaDataPipline/blob/master/src/extract_strava_data.py) 
 My own personal Strava activity data is first **ingested incrementally** using the [Strava API](https://developers.strava.com) and 
 loaded into an **S3 bucket**. On each ingestion run, we query a MySQL database to get the date of the last extraction:
 
