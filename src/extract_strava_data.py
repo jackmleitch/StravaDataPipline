@@ -2,6 +2,7 @@ import csv
 import boto3
 import configparser
 import requests
+import time
 from typing import Dict
 from datetime import datetime
 
@@ -66,13 +67,27 @@ if __name__ == "__main__":
     activity_num = 1
     # while activity has not been extracted yet
     while True:
-        response_json = make_strava_api_request(header, activity_num)
+        # Strava has a rate limit of 100 requests every 15 mins
+        if activity_num % 75 == 0:
+            print("Rate limit hit, sleeping for 15 minutes...")
+            time.sleep(15 * 60)
+        try:
+            response_json = make_strava_api_request(header, activity_num)
+        # rate limit has exceeded, wait 15 minutes
+        except KeyError:
+            print("Rate limit hit, sleeping for 15 minutes...")
+            time.sleep(15 * 60)
+            response_json = make_strava_api_request(header, activity_num)
         date = response_json["start_date"]
         converted_date = convert_strava_start_date(date)
         if converted_date > last_updated_warehouse:
             activity = []
             for col in columns_to_extract:
-                activity.append(response_json[col])
+                try:
+                    activity.append(response_json[col])
+                # if col is not found in API repsonse
+                except KeyError:
+                    activity.append(None)
             all_activities.append(activity)
             activity_num += 1
         else:
