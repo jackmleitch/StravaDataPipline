@@ -1,14 +1,33 @@
 import csv
-import boto3
-import configparser
 import requests
 import time
-from typing import Dict
+
+from typing import Dict, List
 from datetime import datetime
 
 from utilities.mysql_utils import connect_mysql
-from utilities.strava_api_utils import connect_strava, convert_strava_start_date
+from utilities.strava_api_utils import (
+    connect_strava,
+    convert_strava_start_date,
+    parse_api_output,
+)
 from utilities.s3_utils import connect_s3
+
+
+def get_date_of_last_warehouse_update() -> datetime:
+    """
+    Get the datetime of last time data was extracted from Strava API
+    by querying MySQL database.
+    """
+    mysql_conn = connect_mysql()
+    get_last_updated_query = """
+        SELECT COALESCE(MAX(LastUpdated), '1900-01-01')
+        FROM last_extracted;"""
+    mysql_cursor = mysql_conn.cursor()
+    mysql_cursor.execute(get_last_updated_query)
+    result = mysql_cursor.fetchone()
+    last_updated_warehouse = datetime.strptime(result[0], "%Y-%m-%d %H:%M:%S")
+    return last_updated_warehouse
 
 
 def make_strava_api_request(
@@ -23,45 +42,8 @@ def make_strava_api_request(
     return response_json
 
 
-columns_to_extract = [
-    "id",
-    "name",
-    "distance",
-    "moving_time",
-    "elapsed_time",
-    "total_elevation_gain",
-    "type",
-    "workout_type",
-    "start_date",
-    "timezone",
-    "location_country",
-    "achievement_count",
-    "kudos_count",
-    "comment_count",
-    "athlete_count",
-    "start_latlng",
-    "end_latlng",
-    "average_speed",
-    "max_speed",
-    "average_cadence",
-    "average_temp",
-    "average_heartrate",
-    "max_heartrate",
-    "suffer_score",
-]
-
-if __name__ == "__main__":
-    # get last datetime of data extraction
-    mysql_conn = connect_mysql()
-    get_last_updated_query = """
-        SELECT COALESCE(MAX(LastUpdated), '1900-01-01')
-        FROM last_extracted;"""
-    mysql_cursor = mysql_conn.cursor()
-    mysql_cursor.execute(get_last_updated_query)
-    result = mysql_cursor.fetchone()
-    last_updated_warehouse = datetime.strptime(result[0], "%Y-%m-%d %H:%M:%S")
-
-    # connect to Strava API and get data
+def extract_strava_activities(last_updated_warehouse: datetime) -> List[List]:
+    """Connect to Strava API and get data up until last_updated_warehouse datetime."""
     header = connect_strava()
     all_activities = []
     activity_num = 1
@@ -81,32 +63,35 @@ if __name__ == "__main__":
         date = response_json["start_date"]
         converted_date = convert_strava_start_date(date)
         if converted_date > last_updated_warehouse:
-            activity = []
-            for col in columns_to_extract:
-                try:
-                    activity.append(response_json[col])
-                # if col is not found in API repsonse
-                except KeyError:
-                    activity.append(None)
+            activity = parse_api_output(response_json)
             all_activities.append(activity)
             activity_num += 1
         else:
             break
+    return all_activities
 
-    # save extracted data to .csv file
+
+def save_data_to_csv(all_activities: List[List]) -> str:
+    """Save extracted data to .csv file."""
     todays_date = datetime.today().strftime("%Y_%m_%d")
-    export_file = f"strava_data/{todays_date}_export_file.csv"
-    with open(export_file, "w") as fp:
+    export_file_path = f"strava_data/{todays_date}_export_file.csv"
+    with open(export_file_path, "w") as fp:
         csvw = csv.writer(fp, delimiter="|")
         csvw.writerows(all_activities)
     print("Strava data extracted from API!")
+    return export_file_path
 
-    # upload .csv file to s3
+
+def upload_csv_to_s3(export_file_path: str) -> None:
+    """Upload extracted .csv file to s3 bucket."""
     s3 = connect_s3()
-    s3.upload_file(export_file, "strava-data-pipeline", export_file)
+    s3.upload_file(export_file_path, "strava-data-pipeline", export_file_path)
     print("Strava data uploaded to s3 bucket!")
 
-    # update last extraction date in MySQL database
+
+def save_extraction_date_to_database() -> None:
+    """Update last extraction date in MySQL database to todays datetime."""
+    mysql_conn = connect_mysql()
     update_last_updated_query = """
         INSERT INTO last_extracted (LastUpdated)
         VALUES (%s);"""
@@ -115,3 +100,11 @@ if __name__ == "__main__":
     mysql_cursor.execute(update_last_updated_query, todays_datetime)
     mysql_conn.commit()
     print("Extraction datetime added to MySQL database!")
+
+
+if __name__ == "__main__":
+    last_updated_warehouse = get_date_of_last_warehouse_update()
+    all_activities = extract_strava_activities(last_updated_warehouse)
+    export_file_path = save_data_to_csv(all_activities)
+    upload_csv_to_s3(export_file_path)
+    save_extraction_date_to_database()
