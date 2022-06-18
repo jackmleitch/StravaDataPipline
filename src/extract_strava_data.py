@@ -14,7 +14,7 @@ from src.utilities.strava_api_utils import (
 from src.utilities.s3_utils import connect_s3
 
 
-def get_date_of_last_warehouse_update() -> Tuple[datetime, datetime]:
+def get_date_of_last_warehouse_update() -> Tuple[datetime, str]:
     """
     Get the datetime of last time data was extracted from Strava API
     by querying MySQL database and also return current datetime.
