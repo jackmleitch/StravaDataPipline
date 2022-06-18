@@ -5,13 +5,13 @@ import time
 from typing import Dict, List, Tuple
 from datetime import datetime
 
-from utilities.mysql_utils import connect_mysql
-from utilities.strava_api_utils import (
+from src.utilities.mysql_utils import connect_mysql
+from src.utilities.strava_api_utils import (
     connect_strava,
     convert_strava_start_date,
     parse_api_output,
 )
-from utilities.s3_utils import connect_s3
+from src.utilities.s3_utils import connect_s3
 
 
 def get_date_of_last_warehouse_update() -> Tuple[datetime, datetime]:
