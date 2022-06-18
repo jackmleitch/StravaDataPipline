@@ -16,24 +16,32 @@ result = mysql_cursor.fetchone()
 last_updated_warehouse = datetime.strptime(result[0], "%Y-%m-%d %H:%M:%S")
 ```
 
-We then make repeated calls to the REST API using the `requests` library until we have all activity data between now and `last_updated_warehouse`. 
+We then make repeated calls to the REST API using the `requests` library until we have all activity data between now and `last_updated_warehouse`. We include a `time.sleep()` command to comply with Strava's set rate limit of 100 requests/15 minutes. We also include `try: except:` blocks to combat 
+missing data on certain activities. 
 ```python 
 header = connect_strava()
 all_activities = []
 activity_num = 1
 # while activity has not been extracted yet
 while True:
-    response_json = make_strava_api_request(header, activity_num)
-    date = response_json["start_date"]
-    converted_date = convert_strava_start_date(date)
-    if converted_date > last_updated_warehouse:
-        activity = []
-        for col in columns_to_extract:
+if activity_num % 75 == 0:
+    print("Rate limit hit, sleeping for 15 minutes...")
+    time.sleep(15 * 60)
+response_json = make_strava_api_request(header, activity_num)
+date = response_json["start_date"]
+converted_date = convert_strava_start_date(date)
+if converted_date > last_updated_warehouse:
+    activity = []
+    for col in columns_to_extract:
+        try:
             activity.append(response_json[col])
-        all_activities.append(activity)
-        activity_num += 1
-    else:
-        break
+        # if col is not found in API repsonse
+        except KeyError:
+            activity.append(None)
+    all_activities.append(activity)
+    activity_num += 1
+else:
+    break
 ```
 
 After storing this data locally in a flat pipe-delimited `.csv' file, it is then uploaded to an S3 bucket for later loading into the data warehouse.
