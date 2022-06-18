@@ -2,7 +2,7 @@ import csv
 import requests
 import time
 
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from datetime import datetime
 
 from utilities.mysql_utils import connect_mysql
@@ -14,10 +14,10 @@ from utilities.strava_api_utils import (
 from utilities.s3_utils import connect_s3
 
 
-def get_date_of_last_warehouse_update() -> datetime:
+def get_date_of_last_warehouse_update() -> Tuple[datetime, datetime]:
     """
     Get the datetime of last time data was extracted from Strava API
-    by querying MySQL database.
+    by querying MySQL database and also return current datetime.
     """
     mysql_conn = connect_mysql()
     get_last_updated_query = """
@@ -27,7 +27,8 @@ def get_date_of_last_warehouse_update() -> datetime:
     mysql_cursor.execute(get_last_updated_query)
     result = mysql_cursor.fetchone()
     last_updated_warehouse = datetime.strptime(result[0], "%Y-%m-%d %H:%M:%S")
-    return last_updated_warehouse
+    current_datetime = datetime.today().strftime("%Y-%m-%d %H:%M:%S")
+    return last_updated_warehouse, current_datetime
 
 
 def make_strava_api_request(
@@ -89,22 +90,21 @@ def upload_csv_to_s3(export_file_path: str) -> None:
     print("Strava data uploaded to s3 bucket!")
 
 
-def save_extraction_date_to_database() -> None:
+def save_extraction_date_to_database(current_datetime: datetime) -> None:
     """Update last extraction date in MySQL database to todays datetime."""
     mysql_conn = connect_mysql()
     update_last_updated_query = """
         INSERT INTO last_extracted (LastUpdated)
         VALUES (%s);"""
     mysql_cursor = mysql_conn.cursor()
-    todays_datetime = datetime.today().strftime("%Y-%m-%d %H:%M:%S")
-    mysql_cursor.execute(update_last_updated_query, todays_datetime)
+    mysql_cursor.execute(update_last_updated_query, current_datetime)
     mysql_conn.commit()
     print("Extraction datetime added to MySQL database!")
 
 
 if __name__ == "__main__":
-    last_updated_warehouse = get_date_of_last_warehouse_update()
+    last_updated_warehouse, current_datetime = get_date_of_last_warehouse_update()
     all_activities = extract_strava_activities(last_updated_warehouse)
     export_file_path = save_data_to_csv(all_activities)
     upload_csv_to_s3(export_file_path)
-    save_extraction_date_to_database()
+    save_extraction_date_to_database(current_datetime)
