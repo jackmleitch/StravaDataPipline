@@ -21,4 +21,5 @@ def test_make_strava_api_request():
     header = connect_strava()
     response_json = make_strava_api_request(header=header, activity_num=1)
     assert isinstance(response_json, dict), "API should respond with a dictionary."
+    assert "id" in response_json.keys(), "Response dictionary does not contain id key."
     assert isinstance(response_json["id"], int), "Activity ID should be an integer."
