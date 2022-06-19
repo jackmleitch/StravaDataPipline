@@ -105,6 +105,7 @@ def save_extraction_date_to_database(current_datetime: datetime) -> None:
 if __name__ == "__main__":
     last_updated_warehouse, current_datetime = get_date_of_last_warehouse_update()
     all_activities = extract_strava_activities(last_updated_warehouse)
-    export_file_path = save_data_to_csv(all_activities)
-    upload_csv_to_s3(export_file_path)
-    save_extraction_date_to_database(current_datetime)
+    if all_activities:
+        export_file_path = save_data_to_csv(all_activities)
+        upload_csv_to_s3(export_file_path)
+        save_extraction_date_to_database(current_datetime)
