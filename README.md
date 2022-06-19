@@ -161,6 +161,7 @@ FROM weekly_kudos_count_lag;
 ## Data Visualization
 With the data transformations done we were then able to build out an interactive dashboard using Tableau that updates automatically when new data gets intgested to the data warehouse (which is daily). The dashboard I created was built to investigate how Kudos on my own Strava activities changes over time and location. After building this project I shut down the Redshift server as to not incur any costs but a screenshot of the dashboard can be seen below.
 ![dashboard](https://github.com/jackmleitch/StravaDataPipline/blob/master/images/dashboard.png)
+![dashboard](https://github.com/jackmleitch/StravaDataPipline/blob/master/images/dashboard_map.png)
 
 ## [Unit Testing](https://github.com/jackmleitch/StravaDataPipline/tree/master/tests)
 Unit testing was performed using PyTest and all tests can be found in the tests directory. For example, below we see a unit test to test the `make_strava_api_request` function. It asserts that a dictionary response is received and also that the response contains an 'id' key that is an integer. 
