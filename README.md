@@ -120,6 +120,44 @@ def copy_to_redshift(
     rs_conn.commit()
 ```
 
+## [Data Transformations](https://github.com/jackmleitch/StravaDataPipline/blob/master/sql/)
+Now the data has been ingested into the data warehouse, the next step in the pipeline is data transformations. Data transformations in this case include both noncontextual manipulation of the data and modeling of the data with context and logic in mind. The benefit of using the ELT methodology instead of the ETL framework, in this case, is that it gives us (/the end-user) the freedom in transforming the data the way we need as opposed to having a fixed data model that we cannot change (easily). In my case, I am connecting my Redshift data warehouse to Tableau building out a dashboard. We can, for example, perform simple queries to extract monthly statistics:
+```sql 
+SELECT EXTRACT(MONTH FROM start_date) AS activity_month,
+    ROUND(SUM(distance)/1609) AS total_miles_ran,
+    ROUND(SUM(moving_time)/(60*60)) AS total_running_time_hours,
+    ROUND(SUM(total_elevation_gain)) AS total_elevation_gain_meters,
+    ROUND(SUM(athlete_count)) AS total_people_ran_with,
+    ROUND(AVG(athlete_count)) AS average_people_ran_with
+FROM public.strava_activity_data
+WHERE type='Run'
+GROUP BY activity_month
+ORDER BY activity_month;
+```
+We can also build more complicated data models. For example, we can get the week-by-week percentage change in total weekly kudos broken down by workout type:
+```sql
+WITH weekly_kudos_count AS (
+  SELECT DATE_PART('week', start_date) AS week_of_year, 
+    workout_type, 
+    SUM(kudos_count) AS total_kudos
+  FROM public.strava_activity_data
+  WHERE type = 'Run' AND DATE_PART('year', start_date) = '2022'
+  GROUP BY week_of_year, workout_type
+),
+
+weekly_kudos_count_lag AS (
+  SELECT *, 
+    LAG(total_kudos) OVER(PARTITION BY workout_type ORDER BY week_of_year) 
+        AS previous_week_total_kudos
+  FROM weekly_kudos_count
+)
+
+SELECT *, 
+    COALESCE(ROUND(((total_kudos - previous_week_total_kudos)/previous_week_total_kudos)*100),0)
+        AS percent_kudos_change
+FROM weekly_kudos_count_lag;
+```
+
 ## [Unit Testing](https://github.com/jackmleitch/StravaDataPipline/tree/master/tests)
 Unit testing was performed using PyTest and all tests can be found in the tests directory. For example, below we see a unit test to test the `make_strava_api_request` function. It asserts that a dictionary response is received and also that the response contains an 'id' key that is an integer. 
 ```python
