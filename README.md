@@ -1,7 +1,7 @@
-# Strava Data ETL Pipline
-**:arrows_counterclockwise: :running: ETL of my own Strava data using the Strava API, MySQL, Python, S3, and Redshift**
+# Strava Data EtLT Pipline
+**:arrows_counterclockwise: :running: EtLT of my own Strava data using the Strava API, MySQL, Python, S3, and Redshift**
 
-## [Data Ingestion](https://github.com/jackmleitch/StravaDataPipline/blob/master/src/extract_strava_data.py) 
+## [Data Extraction](https://github.com/jackmleitch/StravaDataPipline/blob/master/src/extract_strava_data.py) 
 My own personal Strava activity data is first **ingested incrementally** using the [Strava API](https://developers.strava.com) and 
 loaded into an **S3 bucket**. On each ingestion run, we query a MySQL database to get the date of the last extraction:
 
@@ -65,7 +65,7 @@ def extract_strava_activities(last_updated_warehouse: datetime) -> List[List]:
     return all_activities
 ```
 
-After storing this data locally in a flat pipe-delimited `.csv` file, it is then uploaded to an S3 bucket for later loading into the data warehouse.
+Before exporting the data locally into a flat pipe-delimited `.csv` file, we perform a few minor transformations such as formatting dates and timezone columns. After we save the data, it is then uploaded to an S3 bucket for later loading into the data warehouse.
 ```python
 def save_data_to_csv(all_activities: List[List]) -> str:
     """Save extracted data to .csv file."""
@@ -92,6 +92,32 @@ def save_extraction_date_to_database(current_datetime: datetime) -> None:
     mysql_cursor = mysql_conn.cursor()
     mysql_cursor.execute(update_last_updated_query, current_datetime)
     mysql_conn.commit()
+```
+
+## [Data Loading](https://github.com/jackmleitch/StravaDataPipline/blob/master/src/copy_to_redshift.py)
+Once the data is loaded into the S3 data lake it is then loaded into our **Redshift** data warehouse. We do this by first loading the data from the S3 bucket into a staging table with the same schema as our production table. We then check for duplicates between the two tables using the 'id' primary key and if any are found they are deleted from the production table. The data from the staging table is then fully inserted into the production table. 
+```python 
+def copy_to_redshift(
+    table_name: str, redshift_connection, s3_file_path: str, role_string: str
+) -> None:
+    """Copy data from s3 into Redshift using staging table to remove duplicates."""
+
+    # write queries to execute on redshift
+    create_temp_table = f"CREATE TEMP TABLE staging_table (LIKE {table_name});"
+    sql_copy_to_temp = f"COPY staging_table FROM {s3_file_path} iam_role {role_string};"
+    # if id already exists in table, we remove it and add new id record during load
+    delete_from_table = f"DELETE FROM {table_name} USING staging_table WHERE {table_name}.id = staging_table.id;"
+    insert_into_table = f"INSERT INTO {table_name} SELECT * FROM staging_table;"
+    drop_temp_table = "DROP TABLE staging_table;"
+
+    # execute queries
+    cur = rs_conn.cursor()
+    cur.execute(create_temp_table)
+    cur.execute(sql_copy_to_temp)
+    cur.execute(delete_from_table)
+    cur.execute(insert_into_table)
+    cur.execute(drop_temp_table)
+    rs_conn.commit()
 ```
 
 ## [Unit Testing](https://github.com/jackmleitch/StravaDataPipline/tree/master/tests)
