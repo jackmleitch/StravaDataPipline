@@ -1,5 +1,7 @@
 # Strava Data EtLT Pipline
-**:arrows_counterclockwise: :running: EtLT of my own Strava data using the Strava API, MySQL, Python, S3, and Redshift**
+## EtLT of my own Strava data using the Strava API, MySQL, Python, S3, Redshift, and Airflow
+
+**I build an EtLT pipeline to ingest my own [Strava data](https://www.strava.com/athletes/5028644) from the Strava API and load it into a [Redshift](https://aws.amazon.com/redshift/) data warehouse. This pipeline is then run once a week using [Airflow](https://airflow.apache.org) to extract any new activity data. The end goal is then to use this data warehouse to build an automatically updating dashboard in Tableau and also to trigger automatic retraining of my [Strava Kudos Prediction model](https://github.com/jackmleitch/StravaKudos).**
 
 ## [Data Extraction](https://github.com/jackmleitch/StravaDataPipline/blob/master/src/extract_strava_data.py) 
 My own personal Strava activity data is first **ingested incrementally** using the [Strava API](https://developers.strava.com) and 
@@ -95,30 +97,40 @@ def save_extraction_date_to_database(current_datetime: datetime) -> None:
 ```
 
 ## [Data Loading](https://github.com/jackmleitch/StravaDataPipline/blob/master/src/copy_to_redshift.py)
-Once the data is loaded into the S3 data lake it is then loaded into our **Redshift** data warehouse. We do this by first loading the data from the S3 bucket into a staging table with the same schema as our production table. We then check for duplicates between the two tables using the 'id' primary key and if any are found they are deleted from the production table. The data from the staging table is then fully inserted into the production table. 
+Once the data is loaded into the S3 data lake it is then loaded into our **Redshift** data warehouse. We load the data in two parts:
+- We first load the data from the S3 bucket into a staging table with the same schema as our production table
+- We then perform validation tests between the staging table and the production table (see [here](#data-validation)). If all critical tests pass we then remove all duplicates between the two tables by first deleting them from the production table. The data from the staging table is then fully inserted into the production table.
+- 
 ```python 
-def copy_to_redshift(
-    table_name: str, redshift_connection, s3_file_path: str, role_string: str
+def copy_to_redshift_staging(
+    table_name: str, rs_conn, s3_file_path: str, role_string: str
 ) -> None:
-    """Copy data from s3 into Redshift using staging table to remove duplicates."""
-
+    """Copy data from s3 into Redshift staging table."""
     # write queries to execute on redshift
-    create_temp_table = f"CREATE TEMP TABLE staging_table (LIKE {table_name});"
+    create_temp_table = f"CREATE TABLE staging_table (LIKE {table_name});"
     sql_copy_to_temp = f"COPY staging_table FROM {s3_file_path} iam_role {role_string};"
-    # if id already exists in table, we remove it and add new id record during load
-    delete_from_table = f"DELETE FROM {table_name} USING staging_table WHERE {table_name}.id = staging_table.id;"
-    insert_into_table = f"INSERT INTO {table_name} SELECT * FROM staging_table;"
-    drop_temp_table = "DROP TABLE staging_table;"
 
     # execute queries
     cur = rs_conn.cursor()
     cur.execute(create_temp_table)
     cur.execute(sql_copy_to_temp)
+    rs_conn.commit()
+    
+def redshift_staging_to_production(table_name: str, rs_conn) -> None:
+    """Copy data from Redshift staging table to production table."""
+    # if id already exists in table, we remove it and add new id record during load
+    delete_from_table = f"DELETE FROM {table_name} USING staging_table WHERE '{table_name}'.id = staging_table.id;"
+    insert_into_table = f"INSERT INTO {table_name} SELECT * FROM staging_table;"
+    drop_temp_table = "DROP TABLE staging_table;"
+    # execute queries
+    cur = rs_conn.cursor()
     cur.execute(delete_from_table)
     cur.execute(insert_into_table)
     cur.execute(drop_temp_table)
     rs_conn.commit()
 ```
+
+## [Data Validation](https://github.com/jackmleitch/StravaDataPipline/blob/master/src/validator.py)
 
 ## [Data Transformations](https://github.com/jackmleitch/StravaDataPipline/blob/master/sql/)
 Now the data has been ingested into the data warehouse, the next step in the pipeline is data transformations. Data transformations in this case include both noncontextual manipulation of the data and modeling of the data with context and logic in mind. The benefit of using the ELT methodology instead of the ETL framework, in this case, is that it gives us (/the end-user) the freedom in transforming the data the way we need as opposed to having a fixed data model that we cannot change (easily). In my case, I am connecting my Redshift data warehouse to Tableau building out a dashboard. We can, for example, perform simple queries to extract monthly statistics:
