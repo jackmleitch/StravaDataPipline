@@ -1,7 +1,7 @@
 # Strava Data EtLT Pipline
 ## EtLT of my own Strava data using the Strava API, MySQL, Python, S3, Redshift, and Airflow
 
-**I build an EtLT pipeline to ingest my own [Strava data](https://www.strava.com/athletes/5028644) from the Strava API and load it into a [Redshift](https://aws.amazon.com/redshift/) data warehouse. This pipeline is then run once a week using [Airflow](https://airflow.apache.org) to extract any new activity data. The end goal is then to use this data warehouse to build an automatically updating dashboard in Tableau and also to trigger automatic retraining of my [Strava Kudos Prediction model](https://github.com/jackmleitch/StravaKudos).**
+**I build an EtLT pipeline to ingest my own [Strava data](https://www.strava.com/athletes/5028644) from the Strava API and load it into a [Redshift](https://aws.amazon.com/redshift/) data warehouse. This pipeline is then run once a week using [Airflow](https://airflow.apache.org) to extract any new activity data. The end goal is then to use this data warehouse to build an automatically updating dashboard in Tableau and also to trigger automatic re-training of my [Strava Kudos Prediction model](https://github.com/jackmleitch/StravaKudos).**
 
 ## [Data Extraction](https://github.com/jackmleitch/StravaDataPipline/blob/master/src/extract_strava_data.py) 
 My own personal Strava activity data is first **ingested incrementally** using the [Strava API](https://developers.strava.com) and 
@@ -14,7 +14,8 @@ def get_date_of_last_warehouse_update() -> Tuple[datetime, str]:
     by querying MySQL database and also return current datetime.
     """
     mysql_conn = connect_mysql()
-    get_last_updated_query = """
+    get_last_updated_query = """<img width="987" alt="image" src="https://user-images.githubusercontent.com/60410574/174647268-08b2486f-ef65-4f30-b984-8f6e5710f8e7.png">
+
         SELECT COALESCE(MAX(LastUpdated), '1900-01-01')
         FROM last_extracted;"""
     mysql_cursor = mysql_conn.cursor()
@@ -100,11 +101,8 @@ def save_extraction_date_to_database(current_datetime: datetime) -> None:
 Once the data is loaded into the S3 data lake it is then loaded into our **Redshift** data warehouse. We load the data in two parts:
 - We first load the data from the S3 bucket into a staging table with the same schema as our production table
 - We then perform validation tests between the staging table and the production table (see [here](#data-validation)). If all critical tests pass we then remove all duplicates between the two tables by first deleting them from the production table. The data from the staging table is then fully inserted into the production table.
-- 
 ```python 
-def copy_to_redshift_staging(
-    table_name: str, rs_conn, s3_file_path: str, role_string: str
-) -> None:
+def copy_to_redshift_staging(table_name: str, rs_conn, s3_file_path: str, role_string: str) -> None:
     """Copy data from s3 into Redshift staging table."""
     # write queries to execute on redshift
     create_temp_table = f"CREATE TABLE staging_table (LIKE {table_name});"
@@ -131,6 +129,111 @@ def redshift_staging_to_production(table_name: str, rs_conn) -> None:
 ```
 
 ## [Data Validation](https://github.com/jackmleitch/StravaDataPipline/blob/master/src/validator.py)
+We implement a simple framework in python that is used to execute SQL-based data validation checks in our data pipeline. Although it lacks many features we would expect to see in a production environment, it is a good start and provides some insight into how we can improve our infrastructure. 
+
+The `validatior.py` script executes a pair of SQL scripts on Redshift and compares the two based on a comparison operator (>, <, =). The test then passes or fails based on the outcome of the two executed scripts. We execute this validation step after we upload our newly ingested data to the staging table but before we insert this table to the production table.
+```python
+def execute_test(db_conn, script_1: str, script_2: str, comp_operator: str) -> bool:
+    """
+    Execute test made up of two scripts and a comparison operator
+    :param comp_operator: comparison operator to compare script outcome
+        (equals, greater_equals, greater, less_equals, less, not_equals)
+    :return: True/False for test pass/fail
+    """
+    # execute the 1st script and store the result
+    cursor = db_conn.cursor()
+    sql_file = open(script_1, "r")
+    print(sql_file.read())
+    cursor.execute(sql_file.read())
+    record = cursor.fetchone()
+    result_1 = record[0]
+    db_conn.commit()
+    cursor.close()
+
+    # execute the 2nd script and store the result
+    ...
+
+    print("Result 1 = " + str(result_1))
+    print("Result 2 = " + str(result_2))
+
+    # compare values based on the comp_operator
+    if comp_operator == "equals": return result_1 == result_2
+    elif comp_operator == "greater_equals": return result_1 >= result_2
+    ...
+
+    # tests have failed if we make it here
+    return False
+```
+As a starting point, I implemented checks that check for duplicates, compare the distribution of the total activities in the staging table (Airflow is set to execute at the end of each week) to the average historical weekly activity count, and compares the distribution of the Kudos Count metric to the historical distribution using the z-score. In other words, the last two queries check if the values are within a 90% confidence interval in either direction of what's expected based on history. For example, the following query computes the z-score for the total activities uploaded in a given week (found in the staging table). 
+```sql
+with activities_by_week AS (
+  SELECT 
+  	date_trunc('week', start_date::date) AS activity_week,
+  	COUNT(*) AS activity_count           
+  FROM public.strava_activity_data
+  GROUP BY activity_week
+  ORDER BY activity_week
+),
+
+activities_by_week_statistics AS (
+  SELECT 
+  	AVG(activity_count) AS avg_activities_per_week,
+  	STDDEV(activity_count) AS std_activities_per_week
+  FROM activities_by_week
+),
+
+staging_table_weekly_count AS (
+  SELECT COUNT(*) AS staging_weekly_count
+  FROM staging_table
+),
+
+activity_count_zscore AS (
+  SELECT
+  	s.staging_weekly_count AS staging_table_count,
+  	p.avg_activities_per_week AS avg_activities_per_week,
+  	p.std_activities_per_week as std_activities_per_week,
+	--compute zscore for weekly activity count
+  	(staging_table_count - avg_activities_per_week) / std_activities_per_week AS z_score
+  FROM staging_table_weekly_count s, activities_by_week_statistics p
+)
+
+SELECT ABS(z_score) AS two_sized_zscore
+FROM activity_count_zscore;
+```
+By running 
+```sh
+python src/validator.py sql/validation/weekly_activity_count_zscore.sql sql/validation/zscore_90_twosided.sql.sql greater_equals warn`
+```
+in the terminal we compare this z-score found in the previous query to the 90% confidence interval z-score `SELECT 1.645;`. The 'warn' at the end of the command tells the script not to exit with an error but to warn us instead. On the other hand, if we add 'halt' to the end the script will exit with an error code and halt all further downstream tasks. 
+
+We also implement a system to send a notification to a given Slack channel with the validation test results, this validation system was inspired by the Data Validation in Pipelines chapter of James Densmore's excellent Data Pipelines book. 
+
+```python
+def send_slack_notification(webhook_url: str, script_1: str, script_2: str,
+    comp_operator: str, test_result: bool) -> bool:
+    try:
+        if test_result == True:
+            message = (f"Validation Test Passed!: {script_1} / {script_2} / {comp_operator}")
+        else:
+            message = (f"Validation Test FAILED!: {script_1} / {script_2} / {comp_operator}")
+        # send test result to Slack
+        slack_data = {"text": message}
+        response = requests.post(webhook_url, data=json.dumps(slack_data),
+            headers={"Content-Type": "application/json"})
+        # if post request to Slack fails
+        if response.status_code != 200:
+            print(response)
+            return False
+    except Exception as e:
+        print("Error sending slack notification")
+        print(str(e))
+        return False
+```
+We then combine all the tests to a shell script `validate_load_data.sh` that we run after loading the data from the S3 bucket to a staging table but before we insert this data into the production table. Running this pipeline on last weeks data gives us the following output:
+![slack](https://github.com/jackmleitch/StravaDataPipline/blob/master/images/slack_output.png)
+It's great to see that our second test failed because I didn't anywhere near as much last week as I usually do! 
+
+Although this validation framework is very basic, it is a good foundation that can be built upon at a later date.
 
 ## [Data Transformations](https://github.com/jackmleitch/StravaDataPipline/blob/master/sql/)
 Now the data has been ingested into the data warehouse, the next step in the pipeline is data transformations. Data transformations in this case include both noncontextual manipulation of the data and modeling of the data with context and logic in mind. The benefit of using the ELT methodology instead of the ETL framework, in this case, is that it gives us (/the end-user) the freedom in transforming the data the way we need as opposed to having a fixed data model that we cannot change (easily). In my case, I am connecting my Redshift data warehouse to Tableau building out a dashboard. We can, for example, perform simple queries to extract monthly statistics:
@@ -171,7 +274,7 @@ FROM weekly_kudos_count_lag;
 ```
 
 ## Data Visualization
-With the data transformations done we were then able to build out an interactive dashboard using Tableau that updates automatically when new data gets intgested to the data warehouse (which is daily). The dashboard I created was built to investigate how Kudos on my own Strava activities changes over time and location. After building this project I shut down the Redshift server as to not incur any costs but a screenshot of the dashboard can be seen below.
+With the data transformations done we were then able to build out an interactive dashboard using Tableau that updates automatically when new data gets intgested to the data warehouse (which is weekly). The dashboard I created was built to investigate how Kudos on my own Strava activities changes over time and location. After building this project I shut down the Redshift server as to not incur any costs but a screenshot of the dashboard can be seen below.
 ![dashboard](https://github.com/jackmleitch/StravaDataPipline/blob/master/images/dashboard.png)
 ![dashboard](https://github.com/jackmleitch/StravaDataPipline/blob/master/images/dashboard_map.png)
 
