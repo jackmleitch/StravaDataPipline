@@ -143,7 +143,6 @@ def execute_test(db_conn, script_1: str, script_2: str, comp_operator: str) -> b
     # execute the 1st script and store the result
     cursor = db_conn.cursor()
     sql_file = open(script_1, "r")
-    print(sql_file.read())
     cursor.execute(sql_file.read())
     record = cursor.fetchone()
     result_1 = record[0]
@@ -235,15 +234,20 @@ It's great to see that our second test failed because I didn't anywhere near as 
 
 Although this validation framework is very basic, it is a good foundation that can be built upon at a later date.
 
-## [Data Transformations](https://github.com/jackmleitch/StravaDataPipline/blob/master/sql/)
-Now the data has been ingested into the data warehouse, the next step in the pipeline is data transformations. Data transformations in this case include both noncontextual manipulation of the data and modeling of the data with context and logic in mind. The benefit of using the ELT methodology instead of the ETL framework, in this case, is that it gives us (/the end-user) the freedom in transforming the data the way we need as opposed to having a fixed data model that we cannot change (easily). In my case, I am connecting my Redshift data warehouse to Tableau building out a dashboard. We can, for example, perform simple queries to extract monthly statistics:
+## [Data Transformations](https://github.com/jackmleitch/StravaDataPipline/blob/master/src/build_data_model.py)
+Now the data has been ingested into the data warehouse, the next step in the pipeline is data transformations. Data transformations in this case include both noncontextual manipulation of the data and modeling of the data with context and logic in mind. The benefit of using the ELT methodology instead of the ETL framework, in this case, is that it gives us (/the end-user) the freedom in transforming the data the way we need as opposed to having a fixed data model that we cannot change (easily). In my case, I am connecting my Redshift data warehouse to Tableau building out a dashboard. We can, for example, build a data model to extract monthly statistics:
 ```sql 
+CREATE TABLE IF NOT EXISTS activity_summary_daily (
+  activity_month numeric,
+  ...
+  std_kudos real
+);
+
+INSERT INTO activity_summary_daily
 SELECT EXTRACT(MONTH FROM start_date) AS activity_month,
     ROUND(SUM(distance)/1609) AS total_miles_ran,
-    ROUND(SUM(moving_time)/(60*60)) AS total_running_time_hours,
-    ROUND(SUM(total_elevation_gain)) AS total_elevation_gain_meters,
-    ROUND(SUM(athlete_count)) AS total_people_ran_with,
-    ROUND(AVG(athlete_count)) AS average_people_ran_with
+    ...
+    ROUND(STDDEV(kudos_count), 1) AS std_kudos
 FROM public.strava_activity_data
 WHERE type='Run'
 GROUP BY activity_month
@@ -272,6 +276,9 @@ SELECT *,
         AS percent_kudos_change
 FROM weekly_kudos_count_lag;
 ```
+A further direction to take this would be to utilize a 3rd party tool such as [dbt](https://www.getdbt.com) to implement data modeling. 
+
+## Putting it All Together with Airflow
 
 ## Data Visualization
 With the data transformations done we were then able to build out an interactive dashboard using Tableau that updates automatically when new data gets intgested to the data warehouse (which is weekly). The dashboard I created was built to investigate how Kudos on my own Strava activities changes over time and location. After building this project I shut down the Redshift server as to not incur any costs but a screenshot of the dashboard can be seen below.
