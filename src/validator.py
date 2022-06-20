@@ -15,7 +15,6 @@ def execute_test(db_conn, script_1: str, script_2: str, comp_operator: str) -> b
     # execute the 1st script and store the result
     cursor = db_conn.cursor()
     sql_file = open(script_1, "r")
-    print(sql_file.read())
     cursor.execute(sql_file.read())
     record = cursor.fetchone()
     result_1 = record[0]
