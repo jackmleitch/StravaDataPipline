@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS activity_summary_daily (
+CREATE TABLE IF NOT EXISTS activity_summary_monthly (
   activity_month numeric,
   total_miles_ran int,
   total_running_time_hours int,
@@ -9,7 +9,9 @@ CREATE TABLE IF NOT EXISTS activity_summary_daily (
   std_kudos real
 );
 
-INSERT INTO activity_summary_daily
+TRUNCATE activity_summary_monthly;
+
+INSERT INTO activity_summary_monthly
 SELECT EXTRACT(MONTH FROM start_date) AS activity_month,
     ROUND(SUM(distance)/1609) AS total_miles_ran,
     ROUND(SUM(moving_time)/(60*60)) AS total_running_time_hours,
