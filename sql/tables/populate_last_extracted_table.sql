@@ -3,4 +3,4 @@ CREATE TABLE last_extracted (
 );
 
 INSERT INTO last_extracted
-	VALUES('2022-01-01 00:00:00');
+	VALUES('2016-01-01 00:00:00');
