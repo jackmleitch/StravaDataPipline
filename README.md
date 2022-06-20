@@ -1,6 +1,8 @@
 # Strava Data EtLT Pipline
 ## EtLT of my own Strava data using the Strava API, MySQL, Python, S3, Redshift, and Airflow
 
+![system_diagram](https://github.com/jackmleitch/StravaDataPipline/blob/master/images/system_diagram.png)
+
 **I build an EtLT pipeline to ingest my [Strava data](https://www.strava.com/athletes/5028644) from the Strava API and load it into a [Redshift](https://aws.amazon.com/redshift/) data warehouse. This pipeline is then run once a week using [Airflow](https://airflow.apache.org) to extract any new activity data. The end goal is then to use this data warehouse to build an automatically updating dashboard in Tableau and also to trigger automatic re-training of my [Strava Kudos Prediction model](https://github.com/jackmleitch/StravaKudos).**
 
 ## [Data Extraction](https://github.com/jackmleitch/StravaDataPipline/blob/master/src/extract_strava_data.py) 
@@ -14,9 +16,8 @@ def get_date_of_last_warehouse_update() -> Tuple[datetime, str]:
     by querying MySQL database and also return current datetime.
     """
     mysql_conn = connect_mysql()
-    get_last_updated_query = """<img width="987" alt="image" src="https://user-images.githubusercontent.com/60410574/174647268-08b2486f-ef65-4f30-b984-8f6e5710f8e7.png">
-
-        SELECT COALESCE(MAX(LastUpdated), '1900-01-01')
+    get_last_updated_query = """
+    	SELECT COALESCE(MAX(LastUpdated), '1900-01-01')
         FROM last_extracted;"""
     mysql_cursor = mysql_conn.cursor()
     mysql_cursor.execute(get_last_updated_query)
@@ -97,7 +98,7 @@ def save_extraction_date_to_database(current_datetime: datetime) -> None:
     mysql_conn.commit()
 ```
 
-## [Data Loading](https://github.com/jackmleitch/StravaDataPipline/blob/master/src/copy_to_redshift.py)
+## [Data Loading](https://github.com/jackmleitch/StravaDataPipline/blob/master/src/copy_to_redshift_staging.py)
 Once the data is loaded into the S3 data lake it is then loaded into our **Redshift** data warehouse. We load the data in two parts:
 - We first load the data from the S3 bucket into a staging table with the same schema as our production table
 - We then perform validation tests between the staging table and the production table (see [here](#data-validation)). If all critical tests pass we then remove all duplicates between the two tables by first deleting them from the production table. The data from the staging table is then fully inserted into the production table.
