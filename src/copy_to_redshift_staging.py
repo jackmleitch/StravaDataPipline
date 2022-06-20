@@ -8,7 +8,7 @@ def copy_to_redshift_staging(
 ) -> None:
     """Copy data from s3 into Redshift staging table."""
     # write queries to execute on redshift
-    create_temp_table = f"CREATE TEMP TABLE staging_table (LIKE {table_name});"
+    create_temp_table = f"CREATE TABLE staging_table (LIKE {table_name});"
     sql_copy_to_temp = f"COPY staging_table FROM {s3_file_path} iam_role {role_string};"
 
     # execute queries
