@@ -267,7 +267,7 @@ CREATE TABLE IF NOT EXISTS activity_summary_monthly (
 TRUNCATE activity_summary_monthly;
 
 INSERT INTO activity_summary_monthly
-SELECT EXTRACT(MONTH FROM start_date) AS activity_month,
+SELECT DATE_TRUNC('month', start_date::date) AS activity_month,
     ROUND(SUM(distance)/1609) AS total_miles_ran,
     ...
     ROUND(STDDEV(kudos_count), 1) AS std_kudos
@@ -281,7 +281,7 @@ We can also build more complicated data models. For example, we can get the week
 
 ```sql
 WITH weekly_kudos_count AS (
-  SELECT DATE_PART('week', start_date) AS week_of_year,
+  SELECT DATE_TRUNC('week', start_date::date) AS week_of_year,
     workout_type,
     SUM(kudos_count) AS total_kudos
   FROM public.strava_activity_data
